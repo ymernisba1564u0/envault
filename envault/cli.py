@@ -1,72 +1,91 @@
-"""Command-line interface for envault."""
-
-import sys
-from pathlib import Path
+"""CLI for envault — encrypt/decrypt .env files with profile support."""
 
 import click
+from pathlib import Path
 
 from envault.crypto import encrypt_file, decrypt_file
 from envault.keystore import save_keypair, load_public_key, load_private_key, keypair_exists, generate_keypair
+from envault.profiles import (
+    ensure_profile_dir,
+    profile_path,
+    profile_exists,
+    list_profiles,
+    delete_profile,
+    resolve_profile,
+)
 
 
 @click.group()
 def cli():
-    """envault — encrypt and decrypt .env files using age encryption."""
-    pass
+    """envault — lightweight .env encryption using age."""
 
 
 @cli.command("init")
-@click.option("--force", is_flag=True, default=False, help="Overwrite existing keypair.")
+@click.option("--force", is_flag=True, help="Overwrite existing keypair.")
 def init_cmd(force):
     """Generate and store a new age keypair."""
     if keypair_exists() and not force:
-        click.echo("Keypair already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
-
+        raise click.ClickException("Keypair already exists. Use --force to overwrite.")
     private_key, public_key = generate_keypair()
     save_keypair(private_key, public_key)
-    click.echo(f"Keypair generated.")
-    click.echo(f"Public key: {public_key}")
+    click.echo(f"Keypair initialised. Public key: {public_key}")
 
 
 @cli.command("encrypt")
-@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
-@click.option("-o", "--output", "output_file", type=click.Path(path_type=Path), default=None,
-              help="Output path (default: <input>.age)")
-def encrypt_cmd(input_file: Path, output_file: Path):
-    """Encrypt an .env file."""
-    if not keypair_exists():
-        click.echo("No keypair found. Run `envault init` first.", err=True)
-        sys.exit(1)
-
-    if output_file is None:
-        output_file = input_file.with_suffix(".age")
-
+@click.argument("env_file", default=".env")
+@click.option("-p", "--profile", default=None, help="Profile name (default: 'default').")
+def encrypt_cmd(env_file, profile):
+    """Encrypt an .env file into a named profile."""
+    profile = resolve_profile(profile)
+    src = Path(env_file)
+    if not src.exists():
+        raise click.ClickException(f"Source file not found: {env_file}")
     public_key = load_public_key()
-    encrypt_file(input_file, output_file, public_key)
-    click.echo(f"Encrypted: {input_file} -> {output_file}")
+    ensure_profile_dir()
+    dest = profile_path(profile)
+    encrypt_file(src, dest, public_key)
+    click.echo(f"Encrypted '{env_file}' → profile '{profile}' ({dest})")
 
 
 @cli.command("decrypt")
-@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
-@click.option("-o", "--output", "output_file", type=click.Path(path_type=Path), default=None,
-              help="Output path (default: <input> without .age)")
-def decrypt_cmd(input_file: Path, output_file: Path):
-    """Decrypt an .age file."""
-    if not keypair_exists():
-        click.echo("No keypair found. Run `envault init` first.", err=True)
-        sys.exit(1)
-
-    if output_file is None:
-        if input_file.suffix == ".age":
-            output_file = input_file.with_suffix("")
-        else:
-            output_file = input_file.with_name(input_file.name + ".decrypted")
-
+@click.argument("output", default=".env")
+@click.option("-p", "--profile", default=None, help="Profile name (default: 'default').")
+@click.option("--force", is_flag=True, help="Overwrite existing output file.")
+def decrypt_cmd(output, profile, force):
+    """Decrypt a profile back into a .env file."""
+    profile = resolve_profile(profile)
+    if not profile_exists(profile):
+        raise click.ClickException(f"Profile '{profile}' not found. Run 'envault encrypt' first.")
+    dest = Path(output)
+    if dest.exists() and not force:
+        raise click.ClickException(f"'{output}' already exists. Use --force to overwrite.")
     private_key = load_private_key()
-    decrypt_file(input_file, output_file, private_key)
-    click.echo(f"Decrypted: {input_file} -> {output_file}")
+    src = profile_path(profile)
+    decrypt_file(src, dest, private_key)
+    click.echo(f"Decrypted profile '{profile}' → '{output}'")
 
 
-if __name__ == "__main__":
-    cli()
+@cli.command("profiles")
+def profiles_cmd():
+    """List available encrypted profiles."""
+    names = list_profiles()
+    if not names:
+        click.echo("No profiles found. Run 'envault encrypt' to create one.")
+    else:
+        click.echo("Available profiles:")
+        for name in names:
+            click.echo(f"  {name}")
+
+
+@cli.command("drop")
+@click.argument("profile")
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt.")
+def drop_cmd(profile, yes):
+    """Delete an encrypted profile."""
+    if not yes:
+        click.confirm(f"Delete profile '{profile}'?", abort=True)
+    removed = delete_profile(profile)
+    if removed:
+        click.echo(f"Profile '{profile}' deleted.")
+    else:
+        raise click.ClickException(f"Profile '{profile}' not found.")
