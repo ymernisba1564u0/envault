@@ -87,3 +87,11 @@ def test_share_produces_different_ciphertext_each_time(base, setup_keys, sample_
     payload2 = json.loads(out2.read_text())["payload"]
 
     assert payload1 != payload2
+
+
+def test_receive_share_raises_if_bundle_missing(base, setup_keys):
+    """receive_share should raise FileNotFoundError for a non-existent bundle path."""
+    _, _ = setup_keys
+    missing_bundle = _share_dir(base=base) / "ghost_bundle.json"
+    with pytest.raises(FileNotFoundError):
+        receive_share(missing_bundle, base=base)
