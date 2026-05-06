@@ -75,3 +75,12 @@ def test_encrypt_requires_init(runner, isolated, tmp_path):
     result = runner.invoke(cli, ["encrypt", str(env_file)])
     assert result.exit_code == 1
     assert "envault init" in result.output
+
+
+def test_decrypt_requires_init(runner, isolated, tmp_path):
+    """Decrypting without a keypair should fail with a helpful message."""
+    encrypted_file = tmp_path / ".env.age"
+    encrypted_file.write_text("not-real-ciphertext")
+    result = runner.invoke(cli, ["decrypt", str(encrypted_file)])
+    assert result.exit_code == 1
+    assert "envault init" in result.output
