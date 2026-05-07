@@ -66,6 +66,14 @@ def test_keypair_exists_false(key_dir):
     assert keypair_exists(key_dir=key_dir) is False
 
 
+def test_keypair_exists_only_private_key(key_dir):
+    """keypair_exists should return False when only the private key file is present."""
+    private_key, public_key = generate_keypair()
+    save_keypair(private_key, public_key, key_dir=key_dir)
+    (key_dir / "recipient.txt").unlink()
+    assert keypair_exists(key_dir=key_dir) is False
+
+
 def test_load_private_key_missing_raises(key_dir):
     with pytest.raises(FileNotFoundError, match="identity file"):
         load_private_key(key_dir=key_dir)
