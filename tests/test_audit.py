@@ -79,6 +79,14 @@ def test_read_events_respects_limit(isolated_log):
     assert len(events) == 3
 
 
+def test_read_events_limit_larger_than_total(isolated_log):
+    """Requesting more events than exist should return all available events."""
+    for i in range(4):
+        audit.record_event("encrypt", f"p{i}", True)
+    events = audit.read_events(limit=100)
+    assert len(events) == 4
+
+
 def test_clear_log_removes_file(isolated_log):
     _, log_file = isolated_log
     audit.record_event("encrypt", "default", True)
