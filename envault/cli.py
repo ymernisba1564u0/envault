@@ -1,63 +1,81 @@
 """Main CLI entry-point for envault."""
+
 import click
 
-from envault.keystore import save_keypair, keypair_exists, load_public_key
+from envault.keystore import save_keypair, load_public_key, keypair_exists
 from envault.crypto import generate_keypair, encrypt_file, decrypt_file
-from envault.profiles import profile_path, list_profiles, profile_exists, ensure_profile_dir
-from envault.export import render, parse_env_bytes
-from envault.audit import record_event
+from envault.profiles import list_profiles, profile_path, ensure_profile_dir
+from envault.export import render, parse_env_file
 from envault.cli_rotate import rotate_cmd
 from envault.cli_share import share_cmd
 from envault.cli_diff import diff_cmd
+from envault.cli_lock import lock_cmd
+from envault.cli_history import history_cmd
+from envault.cli_import import import_cmd
+from envault.cli_pin import pin_cmd
+from envault.cli_watch import watch_cmd
 
 
 @click.group()
-def cli():
+def cli() -> None:
     """envault — encrypted .env manager."""
 
 
 @cli.command("init")
-@click.option("--force", is_flag=True, default=False, help="Overwrite existing keypair.")
-def init_cmd(force: bool):
+@click.option("--force", is_flag=True, help="Overwrite existing keypair.")
+def init_cmd(force: bool) -> None:
     """Generate a new age keypair."""
     if keypair_exists() and not force:
-        raise click.ClickException("Keypair already exists. Use --force to overwrite.")
-    pub, priv = generate_keypair()
-    save_keypair(pub, priv)
-    record_event("init", detail={"force": force})
-    click.echo(f"Keypair generated. Public key: {pub}")
+        raise click.ClickException(
+            "Keypair already exists. Use --force to overwrite."
+        )
+    priv, pub = generate_keypair()
+    save_keypair(priv, pub)
+    click.echo("Keypair generated.")
 
 
 @cli.command("encrypt")
-@click.argument("env_file", type=click.Path(exists=True))
-@click.option("--profile", default="default", show_default=True)
-def encrypt_cmd(env_file: str, profile: str):
-    """Encrypt an .env file into a named profile."""
-    ensure_profile_dir()
+@click.argument("env_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("profile")
+def encrypt_cmd(env_file: str, profile: str) -> None:
+    """Encrypt ENV_FILE into PROFILE."""
+    from pathlib import Path
+
     pub = load_public_key()
+    ensure_profile_dir()
     dest = profile_path(profile)
-    encrypt_file(env_file, pub, dest)
-    record_event("encrypt", detail={"profile": profile, "source": env_file})
-    click.echo(f"Encrypted '{env_file}' -> profile '{profile}'.")
+    encrypt_file(Path(env_file), dest, pub)
+    click.echo(f"Encrypted → {dest}")
 
 
 @cli.command("decrypt")
-@click.option("--profile", default="default", show_default=True)
-@click.option("--export", "export_format", type=click.Choice(["export", "dotenv", "raw"]), default="raw")
-def decrypt_cmd(profile: str, export_format: str):
-    """Decrypt a named profile and print to stdout."""
-    if not profile_exists(profile):
-        raise click.ClickException(f"Profile '{profile}' not found.")
+@click.argument("profile")
+@click.option("--format", "fmt", default="export", show_default=True,
+              type=click.Choice(["export", "dotenv", "raw"]))
+def decrypt_cmd(profile: str, fmt: str) -> None:
+    """Decrypt PROFILE and print to stdout."""
+    import tempfile
+    from pathlib import Path
     from envault.keystore import load_private_key
+
+    src = profile_path(profile)
+    if not src.exists():
+        raise click.ClickException(f"Profile '{profile}' not found.")
+
     priv = load_private_key()
-    raw = decrypt_file(profile_path(profile), priv)
-    record_event("decrypt", detail={"profile": profile})
-    pairs = parse_env_bytes(raw)
-    click.echo(render(pairs, fmt=export_format))
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".env") as tmp:
+        tmp_path = Path(tmp.name)
+
+    try:
+        decrypt_file(src, tmp_path, priv)
+        pairs = parse_env_file(tmp_path)
+        click.echo(render(pairs, fmt))
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 @cli.command("profiles")
-def profiles_cmd():
+def profiles_cmd() -> None:
     """List available profiles."""
     names = list_profiles()
     if not names:
@@ -66,29 +84,17 @@ def profiles_cmd():
         click.echo(name)
 
 
-@cli.command("verify")
-@click.option("--profile", default=None, help="Verify a single profile.")
-def verify_cmd(profile: str):
-    """Verify integrity of encrypted profiles."""
-    from envault.verify import verify_profile, verify_all
-    if profile:
-        result = verify_profile(profile)
-        status = "OK" if result.ok else f"FAIL ({result.reason})"
-        click.echo(f"{profile}: {status}")
-        if not result.ok:
-            raise SystemExit(1)
-    else:
-        results = verify_all()
-        any_fail = False
-        for name, result in results.items():
-            status = "OK" if result.ok else f"FAIL ({result.reason})"
-            click.echo(f"{name}: {status}")
-            if not result.ok:
-                any_fail = True
-        if any_fail:
-            raise SystemExit(1)
+@cli.command("pubkey")
+def pubkey_cmd() -> None:
+    """Print the current public key."""
+    click.echo(load_public_key())
 
 
-cli.add_command(rotate_cmd, name="rotate")
-cli.add_command(share_cmd, name="share")
-cli.add_command(diff_cmd, name="diff")
+cli.add_command(rotate_cmd, "rotate")
+cli.add_command(share_cmd, "share")
+cli.add_command(diff_cmd, "diff")
+cli.add_command(lock_cmd, "lock")
+cli.add_command(history_cmd, "history")
+cli.add_command(import_cmd, "import")
+cli.add_command(pin_cmd, "pin")
+cli.add_command(watch_cmd, "watch")
