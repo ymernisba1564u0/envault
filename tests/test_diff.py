@@ -86,3 +86,19 @@ def test_comments_ignored():
     b_ = b"FOO=bar\n"
     result = diff_envs(a, b_)
     assert not result.has_changes
+
+
+def test_added_keys_not_in_removed_or_changed():
+    """Keys that are newly added should not appear in removed or changed."""
+    result = diff_envs(OLD_ENV, NEW_ENV)
+    changed_keys = [k for k, _, _ in result.changed]
+    assert "NEW_KEY" not in result.removed
+    assert "NEW_KEY" not in changed_keys
+
+
+def test_removed_keys_not_in_added_or_changed():
+    """Keys that are removed should not appear in added or changed."""
+    result = diff_envs(OLD_ENV, NEW_ENV)
+    changed_keys = [k for k, _, _ in result.changed]
+    assert "BAZ" not in result.added
+    assert "BAZ" not in changed_keys
